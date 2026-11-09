@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fenix"
+version = "0.1.0"
+description = "Sistema de autorreparación de infraestructura — TP Final PAII"
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    "boto3>=1.35",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "requests>=2.32",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

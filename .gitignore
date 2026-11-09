@@ -1,0 +1,77 @@
+# ---------- Secretos y configuración local ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+tokens/
+secrets/
+
+# ---------- Entornos virtuales ----------
+.venv/
+venv/
+env/
+ENV/
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+pip-wheel-metadata/
+MANIFEST
+
+# ---------- Herramientas de desarrollo ----------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# ---------- Runtime del laboratorio ----------
+# El inventario, el ledger y los logs son propios de cada máquina.
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+*.log
+*.log.gz
+!evidencias/**/*.log
+!evidencias/**/*.log.gz
+
+# ---------- LocalStack / Docker ----------
+.localstack/
+localstack_data/
+
+# ---------- Editores ----------
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# ---------- Sistema operativo ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Temporales y restos de merge ----------
+*.tmp
+*.bak
+*.orig
+*.rej
+.cache/

@@ -1,0 +1,27 @@
+# Dependencias directas del proyecto.
+#
+# Política: solo mínimos. Este archivo declara el piso de compatibilidad;
+# las versiones exactas de una instalación reproducible están en
+# requirements-lock.txt.
+#
+# Instalación reproducible en una .venv:
+#   python -m venv .venv
+#   source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
+#   python -m pip install -r requirements-lock.txt
+#   python -m pip install -e . --no-deps
+
+# ---------- Runtime ----------
+boto3>=1.35
+fastapi>=0.115
+uvicorn[standard]>=0.30
+requests>=2.32
+python-dotenv>=1.0
+
+# ---------- Desarrollo y pruebas ----------
+pytest>=8
+httpx>=0.27
+
+# ---------- Proyecto ----------
+# Instala el paquete en modo editable para que `import fenix` resuelva
+# desde src/. Ejecutar desde la raíz del repo.
+-e .

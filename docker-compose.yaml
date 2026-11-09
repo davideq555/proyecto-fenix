@@ -1,0 +1,36 @@
+name: fenix
+
+services:
+  localstack:
+    image: localstack/localstack:3.8.0
+    container_name: fenix-localstack
+    restart: unless-stopped
+
+    # Solo loopback: el helper del proyecto rechaza destinos fuera de
+    # 127.0.0.1:4566 y LocalStack no tiene autenticación propia.
+    ports:
+      - "127.0.0.1:4566:4566"
+
+    environment:
+      # Servicios que usa el TP. Ampliar si la plantilla lo requiere.
+      SERVICES: s3,sqs,ec2
+      DEBUG: "0"
+      # Mantiene recursos entre reinicios del contenedor.
+      # Para empezar de cero: docker compose down -v
+      PERSISTENCE: "1"
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      # Opcional: solo si la imagen 3.8.0 exige Auth Token.
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
+
+    volumes:
+      - localstack_data:/var/lib/localstack
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  localstack_data:
