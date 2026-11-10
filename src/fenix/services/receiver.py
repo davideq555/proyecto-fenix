@@ -88,13 +88,29 @@ def _publish_not_implemented(event: dict[str, Any]) -> str:
 
 
 def _publish_with_sqs(event: dict[str, Any]) -> str:
-    """Publica el evento en SQS y devuelve el ``MessageId`` confirmado."""
+    """Publica el evento en SQS y devuelve el ``MessageId`` confirmado.
+
+    Contrato esperado de I2: ``sqs.send_message(event)`` devuelve el
+    ``MessageId`` como ``str`` o la respuesta de Boto3 con la clave
+    ``MessageId``.
+
+    Raises:
+        ValueError: Si la respuesta no confirma un ``MessageId``.
+    """
     from fenix.services import sqs
 
     response = sqs.send_message(event)
     if isinstance(response, str):
-        return response
-    return str(response["MessageId"])
+        message_id = response
+    elif isinstance(response, dict):
+        message_id = response.get("MessageId")
+    else:
+        raise ValueError("respuesta de SQS con formato inesperado")
+
+    if not message_id:
+        raise ValueError("SQS no confirmó un MessageId")
+
+    return str(message_id)
 
 
 async def _read_limited_body(request: Request, limit: int) -> bytes | None:
