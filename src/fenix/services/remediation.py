@@ -16,6 +16,7 @@ _ESTADOS_TERMINALES = frozenset({"terminated", "shutting-down"})
 _ERRORES_INSTANCIA_INVALIDA = frozenset(
     {"InvalidInstanceID.NotFound", "InvalidInstanceID.Malformed"}
 )
+_ERRORES_SIN_TAGS = frozenset({"NoSuchTagSet", "NoSuchTagSetError"})
 
 
 class RepairError(Exception):
@@ -72,7 +73,6 @@ def repair(
         RepairPermanentError: Si el recurso no existe, no es propio o su
             estado no puede repararse.
         RepairTransientError: Si una falla recuperable impide converger.
-        NotImplementedError: Si la reparación S3 todavía no está implementada.
     """
     if max_attempts < 1:
         raise ValueError("max_attempts debe ser mayor o igual a 1")
@@ -298,5 +298,125 @@ def _repair_s3(
     event: dict[str, Any],
     client: Any,
 ) -> RepairResult:
-    """Repara las etiquetas de un bucket S3 (pendiente para T5)."""
-    raise NotImplementedError("la reparación S3 se implementa en T5")
+    """Restaura las etiquetas obligatorias de un bucket S3.
+
+    Lee las etiquetas actuales, mezcla las esperadas del inventario con las
+    ajenas y escribe solo si hay cambios. Después verifica por relectura.
+
+    Raises:
+        RepairPermanentError: Si el recurso no define bucket o etiquetas válidas.
+        RepairTransientError: Si la API falla o la verificación no converge.
+    """
+    bucket = resource.get("id")
+    if not isinstance(bucket, str) or not bucket:
+        raise RepairPermanentError(f"el recurso {alias} no tiene id")
+
+    expected = resource.get("expected_tags")
+    if not isinstance(expected, dict) or not expected:
+        raise RepairPermanentError(
+            f"el recurso {alias} no define etiquetas esperadas"
+        )
+    for key, value in expected.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise RepairPermanentError(
+                f"el recurso {alias} tiene etiquetas esperadas inválidas"
+            )
+
+    current = _read_tags(client, bucket)
+    merged = {**current, **expected}
+
+    if merged == current:
+        logger.info(
+            "tags S3 ya convergentes",
+            extra={
+                "event_id": event.get("event_id"),
+                "resource_id": alias,
+                "action": "tags",
+                "status": "tags-ok",
+            },
+        )
+        return RepairResult(alias, "noop", False, "tags-ok")
+
+    _write_tags(client, bucket, merged)
+    verified = _read_tags(client, bucket)
+    if any(verified.get(key) != value for key, value in merged.items()):
+        raise RepairTransientError(
+            f"las etiquetas del bucket {bucket} no convergieron"
+        )
+
+    logger.info(
+        "tags S3 reparadas",
+        extra={
+            "event_id": event.get("event_id"),
+            "resource_id": alias,
+            "action": "put-tags",
+            "status": "tags-ok",
+        },
+    )
+    return RepairResult(alias, "put-tags", True, "tags-ok")
+
+
+def _read_tags(client: Any, bucket: str) -> dict[str, str]:
+    """Lee las etiquetas de un bucket y trata ``NoSuchTagSet`` como vacío.
+
+    Raises:
+        RepairPermanentError: Si la respuesta tiene un formato inválido.
+        RepairTransientError: Si la API falla de forma recuperable.
+    """
+    try:
+        response = client.get_bucket_tagging(Bucket=bucket)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in _ERRORES_SIN_TAGS:
+            return {}
+        raise RepairTransientError(
+            f"no se pudieron leer las etiquetas del bucket {bucket}"
+        ) from exc
+    except BotoCoreError as exc:
+        raise RepairTransientError(
+            f"no se pudieron leer las etiquetas del bucket {bucket}"
+        ) from exc
+
+    tag_set = response.get("TagSet", [])
+    if not isinstance(tag_set, list):
+        raise RepairPermanentError(
+            f"respuesta inválida al leer etiquetas del bucket {bucket}"
+        )
+
+    tags: dict[str, str] = {}
+    for item in tag_set:
+        if not isinstance(item, dict):
+            raise RepairPermanentError(
+                f"respuesta inválida al leer etiquetas del bucket {bucket}"
+            )
+        key = item.get("Key")
+        value = item.get("Value")
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise RepairPermanentError(
+                f"respuesta inválida al leer etiquetas del bucket {bucket}"
+            )
+        tags[key] = value
+    return tags
+
+
+def _write_tags(client: Any, bucket: str, tags: dict[str, str]) -> None:
+    """Escribe el conjunto completo de etiquetas de un bucket.
+
+    Raises:
+        RepairTransientError: Si la API rechaza o falla la escritura.
+    """
+    tagging = {
+        "TagSet": [
+            {"Key": key, "Value": value} for key, value in tags.items()
+        ]
+    }
+    try:
+        client.put_bucket_tagging(Bucket=bucket, Tagging=tagging)
+    except ClientError as exc:
+        raise RepairTransientError(
+            f"no se pudieron escribir las etiquetas del bucket {bucket}"
+        ) from exc
+    except BotoCoreError as exc:
+        raise RepairTransientError(
+            f"no se pudieron escribir las etiquetas del bucket {bucket}"
+        ) from exc
