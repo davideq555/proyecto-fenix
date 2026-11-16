@@ -1,59 +1,58 @@
 import gzip
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 
-from fenix.utils.logging_json import GzipRotatingFileHandler, JsonFormatter
+from fenix.utils.logging_json import JSONFormatter, gzip_name, gzip_rotate
 
 
-def test_gzip_rotating_handler_and_json_logging(tmp_path) -> None:
-    """Verifica que el logger escriba en JSON válido, fuerce la rotación
-
-    por tamaño reducido y comprima el archivo resultante en formato gzip (F16).
-    """
-    # Usamos la carpeta temporal aislada de pytest (evita saturar el disco)
+def test_gzip_rotation_and_json_contract(tmp_path) -> None:
+    """Verifica rotación por tamaño reducido, compresión gzip y estructura JSON oficial."""
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
-    log_file = log_dir / "fenix.log"
+    log_file = log_dir / "fenix-test.jsonl"
 
-    # Configuramos un logger dedicado para la prueba
-    logger_name = "test_observability_logger"
-    test_logger = logging.getLogger(logger_name)
-    test_logger.handlers.clear()
-    test_logger.setLevel(logging.INFO)
-    test_logger.propagate = False
-
-    # Instanciamos el GzipRotatingFileHandler con un tamaño muy chico (maxBytes=200)
-    # para forzar la rotación de inmediato sin generar megabytes de logs.
-    file_handler = GzipRotatingFileHandler(
-        str(log_file), maxBytes=200, backupCount=3, encoding="utf-8"
+    # Configuramos RotatingFileHandler con tamaño reducido (250 bytes) y los callbacks oficiales
+    sink = RotatingFileHandler(
+        str(log_file), maxBytes=250, backupCount=3, encoding="utf-8"
     )
-    file_handler.setFormatter(JsonFormatter())
-    test_logger.addHandler(file_handler)
+    sink.setFormatter(JSONFormatter())
+    sink.namer, sink.rotator = gzip_name, gzip_rotate
 
-    # Escribimos suficientes registros para superar los 200 bytes y provocar la rotación
-    for i in range(30):
-        test_logger.info(
-            "Mensaje de prueba para verificar rotación y compresión gzip",
-            extra={"event_id": f"evt-test-{i}"},
+    logger = logging.getLogger("test_fenix_official")
+    logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+    logger.propagate = False
+    logger.addHandler(sink)
+
+    # Emitimos eventos con los campos de correlación permitidos por el contrato
+    for i in range(25):
+        logger.info(
+            "Evento de prueba para rotación gzip",
+            extra={
+                "event_id": f"evt-{i}",
+                "message_id": f"msg-{i}",
+                "resource_id": "i-0123456789abcdef0",
+                "attempt": 1,
+                "action": "isolate_instance",
+                "status": "ok",
+            },
         )
 
-    # Cerramos el handler para liberar los archivos en disco
-    file_handler.close()
-    test_logger.removeHandler(file_handler)
+    sink.close()
+    logger.removeHandler(sink)
 
-    # Verificamos que se hayan generado archivos comprimidos .gz (histórico comprimido)
-    compressed_files = list(log_dir.glob("*.gz"))
-    assert len(compressed_files) > 0, (
-        "Debe existir al menos un archivo de respaldo comprimido en .gz"
-    )
+    # Verificamos que existan archivos rotados y comprimidos en .gz
+    gz_files = list(log_dir.glob("*.gz"))
+    assert len(gz_files) > 0, "Debe generarse al menos un histórico comprimido .gz"
 
-    # Abrimos los archivos .gz y validamos que cada línea contenga un JSON válido con correlación
-    for gz_path in compressed_files:
+    # Leemos el contenido descomprimido y validamos el esquema JSON
+    for gz_path in gz_files:
         with gzip.open(gz_path, "rt", encoding="utf-8") as f:
             for line in f:
-                line = line.strip()
-                if line:
-                    parsed_record = json.loads(line)
-                    assert "timestamp" in parsed_record
-                    assert "level" in parsed_record
-                    assert "message" in parsed_record
+                if line.strip():
+                    record = json.loads(line)
+                    assert "timestamp" in record
+                    assert "level" in record
+                    assert record["event_id"].startswith("evt-")
+                    assert record["action"] == "isolate_instance"

@@ -1,100 +1,106 @@
-import gzip
-import json
-import logging
-import os
-from logging.handlers import RotatingFileHandler
-from typing import Any
+import gzip  # Comprime los históricos rotados.
+import json  # Emite una estructura por línea.
+import logging  # Usa la biblioteca estándar de observabilidad.
+import os  # Elimina el archivo original después de comprimirlo.
+import queue  # Desacopla productores y escritura en un hilo del mismo proceso.
+import shutil  # Copia el archivo al compresor.
+from datetime import UTC, datetime  # Emite marcas UTC.
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+from pathlib import Path  # Crea la carpeta de logs.
 
 
-class GzipRotatingFileHandler(RotatingFileHandler):
-    """Handler personalizado que extiende RotatingFileHandler para comprimir
-    los archivos de log rotados en formato gzip automáticamente.
-    """
+class JSONFormatter(logging.Formatter):
+    """Serializa campos permitidos; no copia indiscriminadamente record.__dict__.
 
-    def doRollover(self) -> None:
-        """Realiza la rotación del archivo de log y comprime el archivo
-        resultante utilizando gzip.
-        """
-        super().doRollover()
-        if self.backupCount > 0:
-            for i in range(self.backupCount - 1, 0, -1):
-                sfn = f"{self.baseFilename}.{i}.gz"
-                dfn = f"{self.baseFilename}.{i + 1}.gz"
-                if os.path.exists(sfn):
-                    if os.path.exists(dfn):
-                        os.remove(dfn)
-                    os.rename(sfn, dfn)
-            dfn = f"{self.baseFilename}.1.gz"
-            if os.path.exists(dfn):
-                os.remove(dfn)
-            if os.path.exists(self.baseFilename + ".1"):
-                # Combinamos los contextos with según la recomendación de Ruff (SIM117)
-                with (
-                    open(self.baseFilename + ".1", "rb") as f_in,
-                    gzip.open(dfn, "wb") as f_out,
-                ):
-                    f_out.writelines(f_in)
-                os.remove(self.baseFilename + ".1")
-
-
-class JsonFormatter(logging.Formatter):
-    """Formateador de logs que convierte los registros en una estructura
-    JSON limpia y uniforme para facilitar su observabilidad.
+    Notes:
+        Cada proceso usa su propio archivo para evitar rotaciones concurrentes.
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        log_record: dict[str, Any] = {
-            "timestamp": self.formatTime(record, self.datefmt),
+        """Convierte un registro en JSON compatible con json.loads.
+
+        Args:
+            record: Registro del logger con extras públicos opcionales.
+        Returns:
+            Una línea JSON con fecha UTC, nivel, evento y contexto autorizado.
+        Raises:
+            TypeError: Si un extra no es serializable; usar escalares públicos.
+        """
+        data = {
+            "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
             "level": record.levelname,
-            "logger": record.name,
             "message": record.getMessage(),
-        }
-        if record.exc_info:
-            log_record["exception"] = self.formatException(record.exc_info)
-        return json.dumps(log_record)
+            "process": record.process,
+            "thread": record.threadName,
+        }  # Campos base.
+        for name in (
+            "event_id",
+            "message_id",
+            "resource_id",
+            "attempt",
+            "action",
+            "status",
+        ):
+            data[name] = getattr(record, name, None)  # Lista cerrada de extras.
+        return json.dumps(data, ensure_ascii=False)  # El mensaje no contiene secretos.
 
 
-def setup_logger(name: str = "fenix") -> logging.Logger:
-    """Configura y retorna una instancia de logger con salida en consola
-    y soporte para archivos rotados y comprimidos en formato gzip.
+def gzip_name(name: str) -> str:
+    """Calcula el nombre comprimido de un histórico.
 
     Args:
-        name (str): Nombre del logger. Por defecto "fenix".
-
+        name: Nombre propuesto por RotatingFileHandler.
     Returns:
-        logging.Logger: Instancia configurada del logger.
+        El mismo nombre con sufijo .gz.
     """
-    logger = logging.getLogger(name)
+    return name + ".gz"  # Permite rotaciones y backups automáticos.
 
-    # Evitar duplicación de handlers si se llama múltiples veces
-    if logger.handlers:
-        return logger
 
-    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-    logger.setLevel(getattr(logging, log_level, logging.INFO))
+def gzip_rotate(source: str, dest: str) -> None:
+    """Comprime y luego elimina el histórico original.
 
-    log_dir = os.getenv("LOG_DIR", "logs")
-    os.makedirs(log_dir, exist_ok=True)
+    Args:
+        source: Archivo cerrado por el manejador.
+        dest: Ruta del archivo comprimido.
+    Returns:
+        None.
+    Raises:
+        OSError: Si falla la lectura, compresión o eliminación.
+    Notes:
+        Esta versión didáctica no promete publicación atómica del gzip.
+    """
+    with open(source, "rb") as origin, gzip.open(dest, "wb") as target:
+        shutil.copyfileobj(origin, target)  # Procesa el contenido sin leerlo entero.
+    os.remove(source)  # Solo se borra después del cierre exitoso del gzip.
 
-    log_file = os.path.join(log_dir, "fenix.log")
 
-    # Valores por defecto como strings para cumplir con PLW1508
-    max_bytes = int(os.getenv("LOG_MAX_BYTES", "1048576"))  # 1 MB por defecto
-    backup_count = int(os.getenv("LOG_BACKUP_COUNT", "5"))
+def setup(name: str) -> tuple[logging.Logger, QueueListener]:
+    """Inicia el pipeline JSON en un archivo exclusivo de este proceso.
 
-    # Formateador JSON
-    formatter = JsonFormatter()
-
-    # Handler para archivo con rotación y compresión gzip
-    file_handler = GzipRotatingFileHandler(
-        log_file, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
-    )
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    # Handler para consola (salida estándar)
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
-    return logger
+    Args:
+        name: Nombre público del componente, por ejemplo fenix-worker.
+    Returns:
+        Logger y listener; el llamador debe ejecutar listener.stop en finally.
+    Raises:
+        OSError: Si no se puede crear logs/ o abrir el archivo.
+    Side Effects:
+        Inicia un hilo y abre un manejador rotativo; llamar una vez por proceso.
+    """
+    Path("logs").mkdir(exist_ok=True)  # Prepara una ruta local ignorada por Git.
+    sink = RotatingFileHandler(
+        f"logs/{name}-{os.getpid()}.jsonl",
+        maxBytes=2 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )  # Limita crecimiento.
+    sink.setFormatter(JSONFormatter())  # Toda línea mantiene el mismo contrato.
+    sink.namer, sink.rotator = gzip_name, gzip_rotate  # Asocia callbacks.
+    records = queue.Queue()  # Esta cola en memoria NO sustituye a SQS.
+    logger = logging.getLogger(name)  # Mantiene un nombre por componente.
+    logger.setLevel(logging.DEBUG)  # Permite demostrar los cinco niveles.
+    logger.handlers.clear()  # Evita duplicados si se reinicializa por una prueba.
+    logger.propagate = False  # No replica mensajes en el logger raíz.
+    logger.addHandler(QueueHandler(records))  # El productor no escribe en disco.
+    listener = QueueListener(records, sink)  # Solo este hilo escribe el archivo.
+    listener.start()  # Empieza el consumo de registros.
+    return logger, listener  # El cierre pertenece al llamador.
