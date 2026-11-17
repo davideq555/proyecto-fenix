@@ -1,4 +1,4 @@
-"""Adaptador HTTP guiado. Elegir Telegram O Slack, no ambos obligatoriamente."""
+"""Servicio de notificaciones externas con validación de respuesta y manejo de errores HTTP."""
 
 import os
 

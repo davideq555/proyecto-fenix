@@ -1,3 +1,5 @@
+"""Configuración de logging estructurado en formato JSON con rotación comprimida en gzip."""
+
 import gzip  # Comprime los históricos rotados.
 import json  # Emite una estructura por línea.
 import logging  # Usa la biblioteca estándar de observabilidad.
