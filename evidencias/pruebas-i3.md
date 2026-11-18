@@ -19,7 +19,7 @@
 | fastapi | 0.163.2 |
 | httpx | 0.28.1 |
 
-Las pruebas se ejecutaron en un entorno virtual temporal con las dependencias
+Las pruebas se ejecutaron en un entorno virtual con las dependencias
 declaradas en `requirements.txt` y `pyproject.toml`.
 
 ## Comando ejecutado
