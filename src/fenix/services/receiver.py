@@ -198,6 +198,13 @@ def create_app(deps: WebhookDependencies) -> FastAPI:
 
         try:
             inventory = deps.load_inventory()
+            if not isinstance(inventory, dict):
+                raise ValueError("el inventario debe ser un objeto JSON")
+            resources = inventory.get("resources", inventory)
+            if not isinstance(resources, dict):
+                raise ValueError(
+                    "la sección resources del inventario no es válida"
+                )
         except (OSError, ValueError) as exc:
             logger.error(
                 "inventario no disponible",
@@ -208,7 +215,7 @@ def create_app(deps: WebhookDependencies) -> FastAPI:
             ) from exc
 
         try:
-            event = deps.validate_event(payload, inventory)
+            event = deps.validate_event(payload, resources)
         except deps.validation_exceptions as exc:
             logger.warning(
                 "webhook rechazado",

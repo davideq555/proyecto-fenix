@@ -9,11 +9,13 @@ from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 
+from fenix.services import events
 from fenix.services.receiver import (
     MAX_BODY_BYTES,
     WebhookDependencies,
     create_app,
 )
+from fenix.utils.errors import ValidationError
 
 SECRETO = "secreto-de-prueba"
 AHORA = 1_700_000_000
@@ -320,3 +322,32 @@ def test_inventario_ilegible_responde_500() -> None:
     )
 
     assert respuesta.status_code == 500
+
+
+def test_inventario_envuelto_en_resources_es_aceptado() -> None:
+    """Acepta el inventario con la forma que escribe setup-demo."""
+    evento = {**EVENTO, "event_id": "evt-node-wrapped"}
+    inventario = {
+        "resources": {
+            "node-01": {"type": "ec2", "id": "i-123"},
+        }
+    }
+    deps = WebhookDependencies(
+        secret=SECRETO,
+        load_inventory=Mock(return_value=inventario),
+        validate_event=events.validate,
+        publish_event=Mock(return_value="msg-001"),
+        validation_exceptions=(ValidationError,),
+        now=Mock(return_value=AHORA),
+    )
+    cliente = _cliente(deps)
+    cuerpo = _cuerpo(evento)
+
+    respuesta = cliente.post(
+        "/webhook",
+        content=cuerpo,
+        headers={"X-Webhook-Signature": _firmar(SECRETO, AHORA, cuerpo)},
+    )
+
+    assert respuesta.status_code == 202
+    assert respuesta.json()["event_id"] == "evt-node-wrapped"
