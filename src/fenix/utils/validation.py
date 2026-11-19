@@ -1,7 +1,7 @@
 """Contratos de validación a completar por el integrante 1."""
 
 import re  # Comprueba el formato de los identificadores.
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta  # Trabaja con fechas conscientes de UTC.
 
 from fenix.utils.errors import ValidationError  # Error público del dominio.
 
