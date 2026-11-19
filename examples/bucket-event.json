@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "event_id": "evt-bucket-001",
+  "event_type": "bucket.tags_missing",
+  "resource_id": "bucket-01",
+  "occurred_at": "2026-10-22T18:00:00Z",
+  "simulate_failures": 0
+}

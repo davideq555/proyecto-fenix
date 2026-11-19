@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "event_id": "evt-node-001",
+  "event_type": "instance.stopped",
+  "resource_id": "node-01",
+  "occurred_at": "2026-10-22T18:00:00Z",
+  "simulate_failures": 0
+}
