@@ -1,48 +1,84 @@
-"""
-Funciones de validación estricta de tipos, formatos y contratos.
-Rol 1 (I1) - Proyecto Fénix.
-"""
+"""Contratos de validación a completar por el integrante 1."""
 
-import re
-from datetime import datetime
+import re  # Comprueba el formato de los identificadores.
+from datetime import datetime, timedelta
 
-from fenix.utils.errors import ValidationError
-
-ID_REGEX = re.compile(r"^[a-z0-9-]{3,32}$")
+from fenix.utils.errors import ValidationError  # Error público del dominio.
 
 
-def validate_identifier(value: str, field_name: str) -> str:
-    """Valida que el identificador cumpla estrictamente con el formato del contrato."""
+def identifier(value: str) -> str:
+    """Valida un identificador corto y devuelve su texto sin modificar.
+
+    Args:
+        value: Texto entre 3 y 32 caracteres; letras minúsculas, dígitos o guion.
+    Returns:
+        El identificador original válido.
+    Raises:
+        ValidationError: Si el tipo o el patrón no cumplen el contrato.
+    """
     if not isinstance(value, str):
-        raise ValidationError(f"El campo '{field_name}' debe ser una cadena de texto.")
-    if not ID_REGEX.match(value):
-        raise ValidationError(f"El campo '{field_name}' ('{value}') no cumple con el formato [a-z0-9-]{{3,32}}.")
+        raise ValidationError("El identificador debe ser una cadena de texto.")
+
+    if not re.fullmatch(r"[a-z0-9-]{3,32}", value):
+        raise ValidationError(
+            f"El identificador '{value}' no cumple con el patrón [a-z0-9-]{3, 32}."
+        )
+
     return value
 
 
-def validate_utc_timestamp(value: str) -> str:
-    """Valida que el timestamp esté en formato ISO 8601 y posea zona horaria UTC explícita."""
-    if not isinstance(value, str):
-        raise ValidationError("El campo 'occurred_at' debe ser una cadena de texto.")
-    
+def ttl_seconds(value: str) -> int:
+    """Valida el TTL didáctico empleado en la opción de entornos efímeros.
+
+    Args:
+        value: Texto con un entero entre 60 y 600 segundos inclusive.
+    Returns:
+        El número entero de segundos.
+    Raises:
+        ValidationError: Si no es entero o está fuera de los límites.
+    """
     try:
-        normalized_value = value.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(normalized_value)
-        
-        if dt.tzinfo is None:
-            raise ValidationError("El timestamp 'occurred_at' debe incluir zona horaria UTC.")
-    except Exception as e:
-        if isinstance(e, ValidationError):
-            raise
-        raise ValidationError(f"Formato de 'occurred_at' inválido: '{value}'. Debe ser ISO 8601.") from e
-        
-    return value
+        # Convertimos asegurando que no acepte booleanos ni flotantes encubiertos si vinieran mal
+        if isinstance(value, bool):
+            raise TypeError("Los booleanos no son válidos como TTL.")
+        ttl = int(value)
+    except (ValueError, TypeError) as err:
+        raise ValidationError("El TTL debe ser un número entero válido.") from err
 
+    if not (60 <= ttl <= 600):
+        raise ValidationError(
+            f"El TTL {ttl} está fuera del rango permitido (60 - 600)."
+        )
 
-def validate_ttl(ttl: int) -> int:
-    """Valida que el tiempo de vida (TTL) sea un número entero positivo y no un booleano."""
-    if isinstance(ttl, bool) or not isinstance(ttl, int):
-        raise ValidationError("El campo 'ttl_seconds' debe ser un número entero (no se aceptan booleanos).")
-    if ttl < 0:
-        raise ValidationError("El campo 'ttl_seconds' no puede ser un número negativo.")
     return ttl
+
+
+def utc_text(value: str) -> datetime:
+    """Interpreta una fecha UTC explícita sin aceptar fechas ingenuas.
+
+    Args:
+        value: ISO 8601 terminado en Z o con offset +00:00.
+    Returns:
+        Fecha con zona UTC; por ejemplo 2026-10-22T18:00:00+00:00.
+    Raises:
+        ValidationError: Si falta zona, hay offset no nulo o formato inválido.
+    """
+    if not isinstance(value, str):
+        raise ValidationError(
+            "La fecha debe ser una cadena de texto en formato ISO 8601."
+        )
+
+    try:
+        # Normalizamos la 'Z' al formato de offset UTC numérico compatible
+        normalized = value.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+    except Exception as err:
+        raise ValidationError(f"Formato de fecha inválido: '{value}'.") from err
+
+    # Exigir zona horaria explícita y que el offset sea exactamente UTC (timedelta(0))
+    if dt.tzinfo is None or dt.utcoffset() != timedelta(0):
+        raise ValidationError(
+            "La fecha debe incluir una zona horaria UTC explícita (terminada en Z o +00:00)."
+        )
+
+    return dt
