@@ -286,3 +286,40 @@ def test_resultado_se_convierte_a_dict() -> None:
         "changed": True,
         "status": "running",
     }
+
+
+def test_credenciales_rechazadas_al_describir_son_permanentes() -> None:
+    """Una credencial rechazada no se recupera reintentando."""
+    cliente = EC2Falso(
+        ["stopped"],
+        error_descripcion=_error("UnauthorizedOperation", "DescribeInstances"),
+    )
+
+    with pytest.raises(RepairPermanentError):
+        repair(_evento(), _inventario(), ec2_client=cliente, sleep=Mock())
+
+
+def test_credenciales_rechazadas_al_arrancar_son_permanentes() -> None:
+    """Un AccessDenied al arrancar no se recupera reintentando."""
+    cliente = EC2Falso(
+        ["stopped"],
+        error_inicio=_error("AccessDenied", "StartInstances"),
+    )
+
+    with pytest.raises(RepairPermanentError):
+        repair(_evento(), _inventario(), ec2_client=cliente, sleep=Mock())
+
+
+def test_espera_excesiva_es_error_de_configuracion() -> None:
+    """Rechaza una espera que supera la ventana de visibilidad del worker."""
+    cliente = EC2Falso(["stopped"])
+
+    with pytest.raises(ValueError):
+        repair(
+            _evento(),
+            _inventario(),
+            ec2_client=cliente,
+            sleep=Mock(),
+            max_attempts=100,
+            poll_interval=1.0,
+        )

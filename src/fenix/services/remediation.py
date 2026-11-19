@@ -17,6 +17,23 @@ _ERRORES_INSTANCIA_INVALIDA = frozenset(
     {"InvalidInstanceID.NotFound", "InvalidInstanceID.Malformed"}
 )
 _ERRORES_SIN_TAGS = frozenset({"NoSuchTagSet", "NoSuchTagSetError"})
+# Credenciales rechazadas o recurso inexistente: reintentar no los corrige.
+_ERRORES_PERMANENTES = frozenset(
+    {
+        "AccessDenied",
+        "AuthFailure",
+        "ExpiredToken",
+        "InvalidBucketName",
+        "InvalidClientTokenId",
+        "MissingAuthenticationToken",
+        "NoSuchBucket",
+        "SignatureDoesNotMatch",
+        "UnauthorizedOperation",
+        "UnrecognizedClientException",
+    }
+)
+# El worker usa VisibilityTimeout=45; la espera debe quedar muy por debajo.
+MAX_ESPERA_SEGUNDOS = 30.0
 
 
 class RepairError(Exception):
@@ -73,9 +90,18 @@ def repair(
         RepairPermanentError: Si el recurso no existe, no es propio o su
             estado no puede repararse.
         RepairTransientError: Si una falla recuperable impide converger.
+        ValueError: Si los parámetros de espera son inválidos o superan
+            ``MAX_ESPERA_SEGUNDOS``.
     """
     if max_attempts < 1:
         raise ValueError("max_attempts debe ser mayor o igual a 1")
+    if poll_interval < 0:
+        raise ValueError("poll_interval no puede ser negativo")
+    if max_attempts * poll_interval > MAX_ESPERA_SEGUNDOS:
+        raise ValueError(
+            f"la espera {max_attempts}x{poll_interval}s supera "
+            f"MAX_ESPERA_SEGUNDOS={MAX_ESPERA_SEGUNDOS}"
+        )
     if not isinstance(event, dict):
         raise RepairPermanentError("evento inválido")
     if not isinstance(inventory, dict):
@@ -221,7 +247,8 @@ def _describe_state(client: Any, instance_id: str) -> str:
     """Lee el estado actual de una instancia EC2.
 
     Raises:
-        RepairPermanentError: Si la instancia no existe o la respuesta es inválida.
+        RepairPermanentError: Si la instancia no existe, la respuesta es inválida
+            o la credencial fue rechazada.
         RepairTransientError: Si la API falla de forma recuperable.
     """
     try:
@@ -231,6 +258,10 @@ def _describe_state(client: Any, instance_id: str) -> str:
         if code in _ERRORES_INSTANCIA_INVALIDA:
             raise RepairPermanentError(
                 f"la instancia {instance_id} no existe"
+            ) from exc
+        if code in _ERRORES_PERMANENTES:
+            raise RepairPermanentError(
+                f"fallo permanente al describir la instancia {instance_id}: {code}"
             ) from exc
         raise RepairTransientError(
             f"no se pudo describir la instancia {instance_id}"
@@ -252,11 +283,18 @@ def _start_instance(client: Any, instance_id: str) -> None:
     """Solicita el arranque de una instancia EC2.
 
     Raises:
-        RepairTransientError: Si la API rechaza o falla el arranque.
+        RepairPermanentError: Si la credencial fue rechazada.
+        RepairTransientError: Si la API rechaza o falla el arranque de forma
+            recuperable.
     """
     try:
         client.start_instances(InstanceIds=[instance_id])
     except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in _ERRORES_PERMANENTES:
+            raise RepairPermanentError(
+                f"fallo permanente al arrancar la instancia {instance_id}: {code}"
+            ) from exc
         raise RepairTransientError(
             f"no se pudo arrancar la instancia {instance_id}"
         ) from exc
@@ -360,7 +398,8 @@ def _read_tags(client: Any, bucket: str) -> dict[str, str]:
     """Lee las etiquetas de un bucket y trata ``NoSuchTagSet`` como vacío.
 
     Raises:
-        RepairPermanentError: Si la respuesta tiene un formato inválido.
+        RepairPermanentError: Si la respuesta tiene un formato inválido o la
+            credencial fue rechazada.
         RepairTransientError: Si la API falla de forma recuperable.
     """
     try:
@@ -369,6 +408,10 @@ def _read_tags(client: Any, bucket: str) -> dict[str, str]:
         code = exc.response.get("Error", {}).get("Code", "")
         if code in _ERRORES_SIN_TAGS:
             return {}
+        if code in _ERRORES_PERMANENTES:
+            raise RepairPermanentError(
+                f"fallo permanente al leer las etiquetas del bucket {bucket}: {code}"
+            ) from exc
         raise RepairTransientError(
             f"no se pudieron leer las etiquetas del bucket {bucket}"
         ) from exc
@@ -403,6 +446,7 @@ def _write_tags(client: Any, bucket: str, tags: dict[str, str]) -> None:
     """Escribe el conjunto completo de etiquetas de un bucket.
 
     Raises:
+        RepairPermanentError: Si la credencial fue rechazada o el bucket no existe.
         RepairTransientError: Si la API rechaza o falla la escritura.
     """
     tagging = {
@@ -413,6 +457,12 @@ def _write_tags(client: Any, bucket: str, tags: dict[str, str]) -> None:
     try:
         client.put_bucket_tagging(Bucket=bucket, Tagging=tagging)
     except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in _ERRORES_PERMANENTES:
+            raise RepairPermanentError(
+                f"fallo permanente al escribir las etiquetas del bucket "
+                f"{bucket}: {code}"
+            ) from exc
         raise RepairTransientError(
             f"no se pudieron escribir las etiquetas del bucket {bucket}"
         ) from exc

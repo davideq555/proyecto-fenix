@@ -220,3 +220,30 @@ def test_tagset_invalido_es_permanente() -> None:
 
     with pytest.raises(RepairPermanentError):
         repair(_evento(), _inventario(), s3_client=cliente)
+
+
+def test_credenciales_rechazadas_al_leer_son_permanentes() -> None:
+    """Un AccessDenied al leer etiquetas no se recupera reintentando."""
+    cliente = S3Falso(error_lectura=_error("AccessDenied", "GetBucketTagging"))
+
+    with pytest.raises(RepairPermanentError):
+        repair(_evento(), _inventario(), s3_client=cliente)
+
+
+def test_bucket_inexistente_al_leer_es_permanente() -> None:
+    """Un bucket que ya no existe no se recupera reintentando."""
+    cliente = S3Falso(error_lectura=_error("NoSuchBucket", "GetBucketTagging"))
+
+    with pytest.raises(RepairPermanentError):
+        repair(_evento(), _inventario(), s3_client=cliente)
+
+
+def test_credenciales_rechazadas_al_escribir_son_permanentes() -> None:
+    """Un UnauthorizedOperation al escribir etiquetas es permanente."""
+    cliente = S3Falso(
+        tags={"Owner": "otro-grupo"},
+        error_escritura=_error("UnauthorizedOperation", "PutBucketTagging"),
+    )
+
+    with pytest.raises(RepairPermanentError):
+        repair(_evento(), _inventario(), s3_client=cliente)
