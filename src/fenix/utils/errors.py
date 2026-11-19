@@ -1,27 +1,33 @@
-"""
-Definición de excepciones personalizadas para el dominio del Proyecto Fénix.
-Rol 1 (I1) - Manejo estricto de errores de dominio y contrato.
-"""
+"""Excepciones compartidas. Integrante 1 revisa cuándo usar cada tipo."""
 
 
-class FenixError(Exception):
-    """Excepción base para todos los errores de dominio del Proyecto Fénix."""
+class ProjectError(Exception):
+    """Error controlado del TP; base para informar y cerrar con código 1.
 
-    def __init__(self, message: str, details: dict | None = None):
-        super().__init__(message)
-        self.message = message
-        self.details = details or {}
-
-
-class ValidationError(FenixError):
-    """
-    Se lanza cuando un evento, payload o alguno de sus campos incumple
-    estrictamente con el contrato JSON o las especificaciones de formato.
+    Args:
+        message: Descripción pública, sin tokens ni URLs privadas.
     """
 
 
-class InventoryError(FenixError):
+class ValidationError(ProjectError):
+    """Entrada inválida o recurso fuera del inventario autorizado.
+
+    Args:
+        message: Regla incumplida, sin copiar secretos de la entrada.
     """
-    Se lanza cuando un recurso especificado no se encuentra registrado
-    en el inventario del grupo o presenta inconsistencias de tipo.
+
+
+class RetryableError(ProjectError):
+    """Fallo transitorio que permite una nueva recepción de SQS.
+
+    Args:
+        message: Descripción del paso pendiente, sin datos sensibles.
+    """
+
+
+class PermanentError(ProjectError):
+    """Fallo no recuperable que se conserva hasta llegar a la DLQ.
+
+    Args:
+        message: Motivo público del rechazo definitivo del evento.
     """
