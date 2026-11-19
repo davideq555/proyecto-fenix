@@ -1,53 +1,98 @@
-"""
-Servicio de procesamiento y validación de contratos de eventos.
-Rol 1 (I1) - Proyecto Fénix.
-"""
+"""Contrato de eventos de autorreparación; integrante 1."""
 
-from fenix.utils.errors import InventoryError, ValidationError
-from fenix.utils.validation import (
-    validate_identifier,
-    validate_ttl,
-    validate_utc_timestamp,
-)
+from fenix.utils.errors import ValidationError
+from fenix.utils.validation import identifier, utc_text
 
-# Inventario permitido de recursos según la arquitectura del proyecto
-ALLOWED_INVENTORIES = {"bucket", "node"}
+# Estructura temporal en memoria para rastrear event_ids procesados y evitar conflictos
+_EVENT_REGISTRY = {}
 
 
-def validate_event_contract(event_data: dict) -> dict:
+def validate(event: dict, inventory: dict) -> dict:
+    """Valida esquema cerrado y resuelve exclusivamente aliases autorizados.
+
+    Args:
+        event: JSON objeto con schema_version, event_id, event_type, resource_id,
+            occurred_at y simulate_failures.
+        inventory: Mapa alias -> recurso, preparado por setup-demo y revisado por el grupo.
+    Returns:
+        Copia validada del evento; no modifica inventory.
+    Raises:
+        ValidationError: Tipo, campo, timestamp o recurso no permitido.
     """
-    Valida estrictamente el contrato JSON de un evento entrante.
-    Verifica tipos, campos obligatorios, formato de IDs, timestamp y pertenencia al inventario.
-    """
-    if not isinstance(event_data, dict):
-        raise ValidationError("El evento debe ser un objeto JSON válido.")
+    if not isinstance(event, dict):
+        raise ValidationError("El evento debe ser un objeto JSON (diccionario).")
 
-    # 1. Validación de campos obligatorios en el nivel raíz
-    required_fields = ["version", "event_id", "resource_type", "resource_id", "occurred_at", "ttl_seconds"]
-    for field in required_fields:
-        if field not in event_data:
-            raise ValidationError(f"Falta el campo obligatorio en el contrato: '{field}'.")
+    # Definir campos exactos obligatorios del contrato cerrado
+    required_fields = {
+        "schema_version",
+        "event_id",
+        "event_type",
+        "resource_id",
+        "occurred_at",
+        "simulate_failures",
+    }
 
-    # 2. Validación de la versión del contrato
-    version = event_data["version"]
-    if not isinstance(version, str) or version != "1.0":
-        raise ValidationError(f"Versión de contrato inválida: '{version}'. Debe ser '1.0'.")
+    if set(event.keys()) != required_fields:
+        raise ValidationError(
+            f"Las claves del evento no coinciden con el contrato esperado. Encontradas: {list(event.keys())}"
+        )
 
-    # 3. Validación de identificadores
-    validate_identifier(event_data["event_id"], "event_id")
-    validate_identifier(event_data["resource_id"], "resource_id")
+    # 1. Validar schema_version (Entero estricto igual a 1, rechazando booleanos)
+    schema_version = event.get("schema_version")
+    if type(schema_version) is not int or schema_version != 1:
+        raise ValidationError(
+            "El campo 'schema_version' debe ser estrictamente el entero 1."
+        )
 
-    # 4. Validación del tipo de recurso contra el inventario
-    resource_type = event_data["resource_type"]
-    if not isinstance(resource_type, str):
-        raise ValidationError("El campo 'resource_type' debe ser una cadena de texto.")
-    if resource_type not in ALLOWED_INVENTORIES:
-        raise InventoryError(f"El recurso '{resource_type}' no se encuentra registrado en el inventario del grupo.")
+    # 2. Validar event_id e resource_id usando la función auxiliar identifier
+    event_id = identifier(event.get("event_id"))
+    resource_id = identifier(event.get("resource_id"))
 
-    # 5. Validación del timestamp UTC
-    validate_utc_timestamp(event_data["occurred_at"])
+    # 3. Validar event_type permitido
+    event_type = event.get("event_type")
+    allowed_event_types = {"instance.stopped", "bucket.tags_missing"}
+    if event_type not in allowed_event_types:
+        raise ValidationError(f"Tipo de evento desconocido: '{event_type}'.")
 
-    # 6. Validación del TTL
-    validate_ttl(event_data["ttl_seconds"])
+    # 4. Validar occurred_at usando utc_text
+    utc_text(event.get("occurred_at"))
 
-    return event_data
+    # 5. Validar simulate_failures (Entero de 0 a 5, rechazando booleanos)
+    simulate_failures = event.get("simulate_failures")
+    if type(simulate_failures) is not int or not (0 <= simulate_failures <= 5):
+        raise ValidationError(
+            "El campo 'simulate_failures' debe ser un número entero entre 0 y 5."
+        )
+
+    # 6. Validar inventario y correspondencia de tipos de recursos
+    if not isinstance(inventory, dict) or resource_id not in inventory:
+        raise ValidationError(
+            f"El recurso '{resource_id}' no se encuentra autorizado en el inventario."
+        )
+
+    resource_info = inventory[resource_id]
+    resource_type = resource_info.get("type")
+
+    # Comprobar correspondencia lógica entre el tipo de evento y el tipo de recurso del inventario
+    if event_type == "instance.stopped" and resource_type != "ec2":
+        raise ValidationError(
+            f"El evento '{event_type}' no corresponde al recurso de tipo '{resource_type}'."
+        )
+    if event_type == "bucket.tags_missing" and resource_type != "s3":
+        raise ValidationError(
+            f"El evento '{event_type}' no corresponde al recurso de tipo '{resource_type}'."
+        )
+
+    # 7. Control de conflictos: verificar si el event_id ya fue registrado con contenido distinto
+    if event_id in _EVENT_REGISTRY:
+        existing_event = _EVENT_REGISTRY[event_id]
+        if existing_event != event:
+            raise ValidationError(
+                f"Conflicto detectado: el event_id '{event_id}' ya fue registrado con un contenido diferente."
+            )
+    else:
+        # Guardar copia del evento asociado a este ID
+        _EVENT_REGISTRY[event_id] = dict(event)
+
+    # Devolver una copia validada del evento sin alterar el inventario
+    return dict(event)
