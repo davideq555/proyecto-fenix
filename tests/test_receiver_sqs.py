@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient
 from fenix.services import receiver, sqs
 from fenix.services.receiver import (
     WebhookDependencies,
-    _publish_not_implemented,
     _publish_with_sqs,
 )
 
@@ -106,33 +105,11 @@ def test_respuesta_sin_message_id_falla(
         _publish_with_sqs({"event_id": "evt"})
 
 
-def test_publicacion_no_implementada_falla() -> None:
-    """Señala que falta la implementación de I2."""
-    with pytest.raises(NotImplementedError):
-        _publish_not_implemented({"event_id": "evt"})
-
-
-def test_from_environment_usa_adaptador_real(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Selecciona el adaptador real cuando ``sqs.send_message`` existe."""
-
-    def falso_send(event: dict) -> str:
-        """Simula el helper de I2."""
-        return "msg"
-
-    monkeypatch.setattr(sqs, "send_message", falso_send, raising=False)
-
+def test_from_environment_usa_adaptador_real() -> None:
+    """Verifica que las dependencias reales usen el adaptador de SQS."""
     deps = WebhookDependencies.from_environment()
 
     assert deps.publish_event is _publish_with_sqs
-
-
-def test_from_environment_usa_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Selecciona el fallback cuando ``sqs.send_message`` no existe."""
-    monkeypatch.delattr(sqs, "send_message", raising=False)
-
-    deps = WebhookDependencies.from_environment()
-
-    assert deps.publish_event is _publish_not_implemented
 
 
 def test_receptor_202_con_respuesta_boto3(monkeypatch: pytest.MonkeyPatch) -> None:

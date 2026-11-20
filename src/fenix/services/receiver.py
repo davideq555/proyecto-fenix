@@ -41,28 +41,16 @@ class WebhookDependencies:
     @classmethod
     def from_environment(cls) -> "WebhookDependencies":
         """Construye las dependencias reales desde el entorno y los módulos."""
-        from fenix.services import events, sqs
+        from fenix.services import events
         from fenix.utils import errors
 
         return cls(
             secret=os.environ.get("WEBHOOK_SECRET", ""),
             load_inventory=_load_inventory,
-            validate_event=getattr(events, "validate", _validate_not_implemented),
-            publish_event=(
-                _publish_with_sqs
-                if hasattr(sqs, "send_message")
-                else _publish_not_implemented
-            ),
-            validation_exceptions=_validation_exceptions(errors),
+            validate_event=events.validate,
+            publish_event=_publish_with_sqs,
+            validation_exceptions=(errors.ValidationError,),
         )
-
-
-def _validation_exceptions(errors_module: Any) -> tuple[type[Exception], ...]:
-    """Resuelve el error de validación del dominio o usa ``ValueError``."""
-    candidate = getattr(errors_module, "ValidationError", None)
-    if isinstance(candidate, type) and issubclass(candidate, Exception):
-        return (candidate,)
-    return (ValueError,)
 
 
 def _load_inventory() -> dict[str, Any]:
@@ -73,18 +61,6 @@ def _load_inventory() -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("el inventario debe ser un objeto JSON")
     return data
-
-
-def _validate_not_implemented(
-    event: dict[str, Any], inventory: dict[str, Any]
-) -> dict[str, Any]:
-    """Señala que la validación del dominio todavía no está implementada."""
-    raise NotImplementedError("events.validate no está implementado todavía")
-
-
-def _publish_not_implemented(event: dict[str, Any]) -> str:
-    """Señala que la publicación en SQS todavía no está implementada."""
-    raise NotImplementedError("sqs.send_message no está implementado todavía")
 
 
 def _publish_with_sqs(event: dict[str, Any]) -> str:
