@@ -1,4 +1,3 @@
-
 """Configuración segura de clientes AWS compatibles con LocalStack."""
 
 from __future__ import annotations
@@ -53,7 +52,7 @@ def _create_client(service_name: str):
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "test"),
         config=Config(
             connect_timeout=3,
-            read_timeout=5,
+            read_timeout=20,
             retries={"max_attempts": 2, "mode": "standard"},
         ),
     )
