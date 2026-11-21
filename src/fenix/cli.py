@@ -15,6 +15,7 @@ import requests  # Envía un webhook de prueba con bytes firmados.
 from botocore.exceptions import BotoCoreError, ClientError
 from dotenv import load_dotenv  # Prepara el entorno de todos los comandos.
 
+from fenix.demo.inject_fault import inject_fault
 from fenix.services import demo, sqs, worker
 from fenix.utils.errors import ProjectError
 from fenix.utils.logging_json import setup
@@ -64,7 +65,7 @@ def main() -> int:
         elif args.command == "setup-demo":  # Crea o recupera recursos.
             print(demo.setup_demo())  # Lee GROUP_ID desde el entorno.
         elif args.command == "fault":  # Perturba solo el inventario del grupo.
-            demo.inject_fault(args.alias)  # I6 implementa la inyección.
+            print(inject_fault(args.alias))  # I6: demo/inject_fault.py.
         elif args.command == "send":  # Firma exactamente lo que envía.
             body = Path(args.file).read_bytes()  # No reserializa después de firmar.
             json.loads(body)  # Rechaza archivos no JSON antes de enviar.
